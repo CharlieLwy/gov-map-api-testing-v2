@@ -47,10 +47,16 @@ const districtMap = {CW:"中西區",EA:"東區",SO:"南區",WC:"灣仔區",KC:"�
 
 // 官方級精準 HK1980 Grid → WGS84 轉換（誤差 < 2米）
 async function hk80ToWgs84(e, n) {
-  const url = `http://www.geodetic.gov.hk/transform/v2/?inSys=hkgrid&e=${e}&n=${n}`;
-  const response = await fetch(url);
-  const data = await response.json();
-  return {lat: parseFloat(data.wgsLat).toFixed(7), lng: parseFloat(data.wgsLong).toFixed(7)};
+  const url = `https://www.geodetic.gov.hk/transform/v2/?inSys=hkgrid&e=${e}&n=${n}`;
+  try {
+    const response = await fetch(url);
+    if (!response.ok) throw new Error('Geodetic API returned ' + response.status);
+    const data = await response.json();
+    return {lat: parseFloat(data.wgsLat).toFixed(7), lng: parseFloat(data.wgsLong).toFixed(7)};
+  } catch (err) {
+    console.error('hk80ToWgs84 error:', err);
+    throw err;
+  }
 }
 
 let chosen = null;
@@ -87,7 +93,13 @@ async function generate(){
   let floor = document.getElementById("floor").value.trim();
   let displayAddr = chosen.name + (chosen.street ? "，" + chosen.street : "") + (floor ? "，" + floor : "");
 
-  let wgs = await hk80ToWgs84(chosen.x, chosen.y);
+  let wgs;
+  try {
+    wgs = await hk80ToWgs84(chosen.x, chosen.y);
+  } catch (err) {
+    document.getElementById("result").innerHTML = `<div class="result"><strong>無法取得經緯度：</strong> ${err.message || err}</div>`;
+    return;
+  }
 
   let googleLink = "https://www.google.com/maps/search/?api=1&query=" + encodeURIComponent(chosen.name + (chosen.street ? " " + chosen.street : ""));
 
