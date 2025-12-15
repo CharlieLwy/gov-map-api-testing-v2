@@ -35,7 +35,7 @@
   <div id="list" class="list"></div>
 </div>
 
-<label>樓層／單位／室</label>
+<label>座數／樓層／單位／室</label>
 <input type="text" id="floor" placeholder="例如：15樓 A室、901">
 
 <button onclick="generate()">產生地址＋導航</button>
@@ -69,7 +69,18 @@ document.getElementById("addr").addEventListener("input", function(){
   fetch("https://www.map.gov.hk/gs/api/v1.0.0/locationSearch?q="+encodeURIComponent(v))
     .then(r=>r.json())
     .then(data=>{
-      data.slice(0,12).forEach(item=>{
+      const results = data.slice(0,12);
+      // If the user typed a suggestion plus extra suffix (e.g. '華樂豪庭10座'),
+      // don't show the dropdown — they likely want to keep the suffix.
+      for (const item of results) {
+        const displayName = item.nameZH || item.nameEN || item.addressZH || item.addressEN || "未知地址";
+        if (v.startsWith(displayName) && v.length > displayName.length) {
+          document.getElementById("list").innerHTML = "";
+          return;
+        }
+      }
+
+      results.forEach(item=>{
         let displayName = item.nameZH || item.nameEN || item.addressZH || item.addressEN || "未知地址";
         let street = (item.nameZH || item.nameEN) ? (item.addressZH || item.addressEN || "") : "";
         let dist   = item.districtZH || districtMap[item.district] || "未知區";
@@ -77,9 +88,18 @@ document.getElementById("addr").addEventListener("input", function(){
         let div = document.createElement("div");
         div.innerHTML = `<strong>${displayName}</strong><br><small>${street}（${dist}）</small>`;
         div.onclick = ()=>{
-          document.getElementById("addr").value = displayName;
+          const addrInput = document.getElementById("addr");
+          const prev = addrInput.value || "";
+          let suffix = "";
+          if (prev.startsWith(displayName)) {
+            suffix = prev.slice(displayName.length).trim();
+          } else if (prev.includes(displayName)) {
+            const idx = prev.indexOf(displayName) + displayName.length;
+            suffix = prev.slice(idx).trim();
+          }
+          addrInput.value = displayName + (suffix ? suffix : "");
           document.getElementById("district").value = dist;
-          chosen = {name: displayName, street: street, dist: dist, x: item.x, y: item.y};
+          chosen = {name: displayName, street: street, suffix: suffix, dist: dist, x: item.x, y: item.y};
           document.getElementById("list").innerHTML = "";
         };
         document.getElementById("list").appendChild(div);
@@ -88,10 +108,46 @@ document.getElementById("addr").addEventListener("input", function(){
 });
 
 async function generate(){
-  if(!chosen){ alert("請從下拉選單選擇一個地址！"); return; }
+  // If user didn't explicitly pick a suggestion, try to resolve the typed address.
+  if(!chosen){
+    const addrVal = document.getElementById("addr").value.trim();
+    if(!addrVal){ alert("請從下拉選單選擇一個地址或輸入地址！"); return; }
+    try {
+      const resp = await fetch("https://www.map.gov.hk/gs/api/v1.0.0/locationSearch?q="+encodeURIComponent(addrVal));
+      const data = await resp.json();
+      if(!data || data.length === 0){
+        alert("找不到相符的地址，請嘗試更改關鍵字或選擇建議項目。");
+        return;
+      }
+      // Use the best match (first result) but preserve any manual suffix typed by user
+      const item = data[0];
+      let displayName = item.nameZH || item.nameEN || item.addressZH || item.addressEN || "未知地址";
+      let street = (item.nameZH || item.nameEN) ? (item.addressZH || item.addressEN || "") : "";
+      let dist   = item.districtZH || districtMap[item.district] || "未知區";
+      // compute suffix the same way as selection handler
+      let suffix = "";
+      if (addrVal.startsWith(displayName)) {
+        suffix = addrVal.slice(displayName.length).trim();
+      } else if (addrVal.includes(displayName)) {
+        const idx = addrVal.indexOf(displayName) + displayName.length;
+        suffix = addrVal.slice(idx).trim();
+      }
+      chosen = {name: displayName, street: street, suffix: suffix, dist: dist, x: item.x, y: item.y};
+      // also update the district input so UI reflects it
+      document.getElementById("district").value = dist;
+    } catch (err) {
+      console.error('locationSearch error:', err);
+      alert('查詢地址時發生錯誤，請稍後再試。');
+      return;
+    }
+  }
 
   let floor = document.getElementById("floor").value.trim();
-  let displayAddr = chosen.name + (chosen.street ? "，" + chosen.street : "") + (floor ? "，" + floor : "");
+  let suffixPart = "";
+  if (chosen.suffix) {
+    suffixPart = (chosen.suffix.startsWith("，") || chosen.suffix.startsWith(",")) ? chosen.suffix : "，" + chosen.suffix;
+  }
+  let displayAddr = chosen.name + suffixPart + (chosen.street ? "，" + chosen.street : "") + (floor ? "，" + floor : "");
 
   let wgs;
   try {
@@ -101,7 +157,8 @@ async function generate(){
     return;
   }
 
-  let googleLink = "https://www.google.com/maps/search/?api=1&query=" + encodeURIComponent(chosen.name + (chosen.street ? " " + chosen.street : ""));
+  let googleQuery = chosen.name + (chosen.suffix ? " " + chosen.suffix : "") + (chosen.street ? " " + chosen.street : "");
+  let googleLink = "https://www.google.com/maps/search/?api=1&query=" + encodeURIComponent(googleQuery);
 
   document.getElementById("result").innerHTML = `
     <strong>完整送貨地址</strong><br>${displayAddr}<br><br>
